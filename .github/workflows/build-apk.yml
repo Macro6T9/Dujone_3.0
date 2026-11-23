@@ -2,15 +2,20 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [main, master]
+  workflow_dispatch:        # Actions ট্যাব থেকে "Run workflow" চেপে হাতে চালানোও যাবে
 
 permissions:
-  contents: write
+  contents: write           # "latest" রিলিজে APK রাখার জন্য
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -23,38 +28,50 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Unzip project
-        run: |
-          unzip -q "Dujone 3.0.zip" -d project
-          cd project
-          # zip-এর ভেতরে যদি একটাই ফোল্ডার থাকে, সেটার ভেতরে ঢুকবে
-          if [ ! -f package.json ] && [ "$(ls | wc -l)" = "1" ]; then cd */; fi
-          if [ ! -f package.json ]; then
-            echo "Error: package.json not found inside zip. Contents:"
-            ls -la
-            exit 1
-          fi
-          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
+      - uses: android-actions/setup-android@v3
 
-      - name: Build APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Gradle ক্যাশ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: নির্ভরতা ইনস্টল
+        run: npm install --no-audit --no-fund
+
+      - name: অ্যান্ড্রয়েড প্রজেক্ট তৈরি (setup.js)
+        run: node setup.js
+
+      - name: APK বিল্ড
+        working-directory: android
         run: |
-          set -e
-          npm ci || npm install
-          npm run build
-          npx cap sync android
-          cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: APK-র নাম ঠিক করা
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK"
+          cp "$APK" dujone.apk
+          ls -lh dujone.apk
 
-      - name: Publish latest release
-        uses: softprops/action-gh-release@v2
+      - name: Artifact আপলোড
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: latest
-          name: Latest APK
-          files: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          name: dujone-debug-apk
+          path: dujone.apk
+          if-no-files-found: error
+
+      # ফোন থেকে সরাসরি ডাউনলোড করার লিংক: Releases → "latest"
+      - name: latest রিলিজে APK রাখা
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dujone.apk --prerelease \
+            --title "দুজনে — সর্বশেষ APK" \
+            --notes "কমিট: ${GITHUB_SHA::7} — এটা ডিবাগ APK (টেস্ট/ব্যক্তিগত ব্যবহারের জন্য)।"
