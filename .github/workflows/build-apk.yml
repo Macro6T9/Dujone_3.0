@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Gradle ক্যাশ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: নির্ভরতা ইনস্টল
+        run: npm install --no-audit --no-fund
+
+      - name: অ্যান্ড্রয়েড প্রজেক্ট তৈরি (setup.js)
+        run: node setup.js
+
+      - name: APK বিল্ড
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: APK-র নাম ঠিক করা
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK"
+          cp "$APK" dujone.apk
+          ls -lh dujone.apk
+
+      - name: Artifact আপলোড
+        uses: actions/upload-artifact@v4
+        with:
+          name: dujone-debug-apk
+          path: dujone.apk
+          if-no-files-found: error
+
+      - name: latest রিলিজে APK রাখা
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dujone.apk --prerelease \
+            --title "দুজনে — সর্বশেষ APK" \
+            --notes "কমিট: ${GITHUB_SHA::7} — এটা ডিবাগ APK (টেস্ট/ব্যক্তিগত ব্যবহারের জন্য)।"
