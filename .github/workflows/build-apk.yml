@@ -19,6 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: প্রজেক্ট ফোল্ডার খোঁজা
+        run: |
+          PKG=$(find . -name package.json -not -path '*/node_modules/*' | head -1)
+          if [ -z "$PKG" ]; then
+            echo "::error::package.json পাওয়া যায়নি — আপলোডে ফাইল বাদ পড়েছে। রিপোতে যা আছে:"
+            find . -not -path './.git/*' | head -60
+            exit 1
+          fi
+          DIR=$(dirname "$PKG")
+          echo "প্রজেক্ট ফোল্ডার: $DIR"
+          for f in setup.js capacitor.config.json src/index.original.html native/MainActivity.java signing/dujone-debug.keystore; do
+            [ -e "$DIR/$f" ] || { echo "::error::$DIR/$f নেই — এই ফাইল আপলোড হয়নি"; exit 1; }
+          done
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -34,17 +49,21 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('package.json') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/package.json') }}
           restore-keys: gradle-${{ runner.os }}-
 
       - name: নির্ভরতা ইনস্টল
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm install --no-audit --no-fund
 
       - name: অ্যান্ড্রয়েড প্রজেক্ট তৈরি (setup.js)
+        working-directory: ${{ env.PROJECT_DIR }}
         run: node setup.js
 
       - name: APK বিল্ড
-        working-directory: android
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
           chmod +x gradlew
-          ./gradlew asse
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: A
