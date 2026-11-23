@@ -8,31 +8,12 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-
-      - name: প্রজেক্ট ফোল্ডার খোঁজা
-        run: |
-          PKG=$(find . -name package.json -not -path '*/node_modules/*' | head -1)
-          if [ -z "$PKG" ]; then
-            echo "::error::package.json পাওয়া যায়নি — আপলোডে ফাইল বাদ পড়েছে। রিপোতে যা আছে:"
-            find . -not -path './.git/*' | head -60
-            exit 1
-          fi
-          DIR=$(dirname "$PKG")
-          echo "প্রজেক্ট ফোল্ডার: $DIR"
-          for f in setup.js capacitor.config.json src/index.original.html native/MainActivity.java signing/dujone-debug.keystore; do
-            [ -e "$DIR/$f" ] || { echo "::error::$DIR/$f নেই — এই ফাইল আপলোড হয়নি"; exit 1; }
-          done
-          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -43,27 +24,39 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Gradle ক্যাশ
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/package.json') }}
-          restore-keys: gradle-${{ runner.os }}-
-
-      - name: নির্ভরতা ইনস্টল
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: npm install --no-audit --no-fund
-
-      - name: অ্যান্ড্রয়েড প্রজেক্ট তৈরি (setup.js)
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: node setup.js
-
-      - name: APK বিল্ড
-        working-directory: ${{ env.PROJECT_DIR }}/android
+      - name: Build APK
         run: |
+          set -e
+          ROOT="$PWD"
+          PKG=$(find . -name package.json -not -path '*/node_modules/*' | head -1)
+          if [ -z "$PKG" ]; then
+            echo "::error::package.json not found - files missing in upload. Repo contains:"
+            find . -not -path './.git/*' | head -60
+            exit 1
+          fi
+          cd "$(dirname "$PKG")"
+          pwd
+          for f in setup.js capacitor.config.json src/index.original.html native/MainActivity.java signing/dujone-debug.keystore; do
+            [ -e "$f" ] || { echo "::error::$f missing in upload"; exit 1; }
+          done
+          npm install --no-audit --no-fund
+          node setup.js
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$ROOT/dujone.apk"
+          ls -lh "$ROOT/dujone.apk"
 
-      - name: A
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dujone-debug-apk
+          path: dujone.apk
+          if-no-files-found: error
+
+      - name: Publish latest release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dujone.apk --prerelease --title "Dujone latest APK" --notes "Debug APK, commit ${GITHUB_SHA::7}"
