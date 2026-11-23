@@ -19,6 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # রিপোতে শুধু zip থাকলে (আনজিপ করা ফাইল না থাকলে) নিজেই খুলে নেবে
+      - name: zip থাকলে খোলা
+        run: |
+          if [ -z "$(find . -maxdepth 3 -name package.json -not -path './.git/*' | head -1)" ]; then
+            Z=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -1)
+            if [ -n "$Z" ]; then
+              echo "zip পাওয়া গেছে: $Z — খোলা হচ্ছে"
+              mkdir -p unzipped
+              unzip -q -o "$Z" -d unzipped
+            fi
+          fi
+
       # package.json যে ফোল্ডারেই থাকুক (রুটে বা ভেতরের ফোল্ডারে), নিজে খুঁজে নেবে
       - name: প্রজেক্ট ফোল্ডার খোঁজা
         run: |
