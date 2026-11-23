@@ -28,7 +28,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      # GitHub-এর ubuntu রানারে Android SDK আগে থেকেই আছে; শুধু লাইসেন্স মেনে নেওয়া
+      - name: Android SDK লাইসেন্স
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Gradle ক্যাশ
         uses: actions/cache@v4
