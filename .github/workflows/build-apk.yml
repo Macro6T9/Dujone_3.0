@@ -19,6 +19,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # package.json যে ফোল্ডারেই থাকুক (রুটে বা ভেতরের ফোল্ডারে), নিজে খুঁজে নেবে
+      - name: প্রজেক্ট ফোল্ডার খোঁজা
+        run: |
+          F=$(find . -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1)
+          if [ -z "$F" ]; then
+            echo "Error: package.json পাওয়া যায়নি। রিপোতে আছে:"
+            find . -maxdepth 3 -not -path './.git/*' | head -50
+            exit 1
+          fi
+          DIR=$(cd "$(dirname "$F")" && pwd)
+          echo "প্রজেক্ট ফোল্ডার: $DIR"
+          ls -la "$DIR"
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -38,22 +52,25 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('package.json') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/package.json') }}
           restore-keys: gradle-${{ runner.os }}-
 
       - name: নির্ভরতা ইনস্টল
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm install --no-audit --no-fund
 
       - name: অ্যান্ড্রয়েড প্রজেক্ট তৈরি (setup.js)
+        working-directory: ${{ env.PROJECT_DIR }}
         run: node setup.js
 
       - name: APK বিল্ড
-        working-directory: android
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: APK-র নাম ঠিক করা
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           test -f "$APK"
@@ -64,14 +81,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dujone-debug-apk
-          path: dujone.apk
+          path: ${{ env.PROJECT_DIR }}/dujone.apk
           if-no-files-found: error
 
       # ফোন থেকে সরাসরি ডাউনলোড করার লিংক: Releases → "latest"
       - name: latest রিলিজে APK রাখা
         continue-on-error: true
+        working-directory: ${{ env.PROJECT_DIR }}
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
           gh release create latest dujone.apk --prerelease \
