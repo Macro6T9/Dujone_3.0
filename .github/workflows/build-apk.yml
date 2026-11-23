@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -24,40 +23,38 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Build APK
+      - name: Unzip project
         run: |
-          set -e
-          ROOT="$PWD"
-          PKG=$(find . -name package.json -not -path '*/node_modules/*' | head -1)
-          if [ -z "$PKG" ]; then
-            echo "::error::package.json not found - files missing in upload. Repo contains:"
-            find . -not -path './.git/*' | head -60
+          unzip -q "Dujone 3.0.zip" -d project
+          cd project
+          # zip-এর ভেতরে যদি একটাই ফোল্ডার থাকে, সেটার ভেতরে ঢুকবে
+          if [ ! -f package.json ] && [ "$(ls | wc -l)" = "1" ]; then cd */; fi
+          if [ ! -f package.json ]; then
+            echo "Error: package.json not found inside zip. Contents:"
+            ls -la
             exit 1
           fi
-          cd "$(dirname "$PKG")"
-          pwd
-          for f in setup.js capacitor.config.json src/index.original.html native/MainActivity.java signing/dujone-debug.keystore; do
-            [ -e "$f" ] || { echo "::error::$f missing in upload"; exit 1; }
-          done
-          npm install --no-audit --no-fund
-          node setup.js
+          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -e
+          npm ci || npm install
+          npm run build
+          npx cap sync android
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk "$ROOT/dujone.apk"
-          ls -lh "$ROOT/dujone.apk"
+          ./gradlew assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dujone-debug-apk
-          path: dujone.apk
-          if-no-files-found: error
+          name: app-debug
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publish latest release
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest dujone.apk --prerelease --title "Dujone latest APK" --notes "Debug APK, commit ${GITHUB_SHA::7}"
-          
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest APK
+          files: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
